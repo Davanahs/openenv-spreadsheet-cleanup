@@ -1,0 +1,14 @@
+name: spreadsheet-cleanup-agent
+description: OpenEnv environment for spreadsheet data cleaning with deterministic grading
+tags:
+  - openenv
+  - data-cleaning
+  - spreadsheet
+  - agent-evaluation
+
+tasks:
+  - easy
+  - medium
+  - hard
+
+entrypoint: app:app
