@@ -1,11 +1,12 @@
 import json
 import os
 from typing import Any, Dict, List
-
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from tasks import list_tasks
 
+load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
