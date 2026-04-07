@@ -1,17 +1,19 @@
-from grader import grade_state
+from grader import grade_from_dict
 
-# fake final state (simulate perfect cleaning)
+# Fake final state (simulate a good but not perfect cleaning run)
 state = {
-    "initial_missing": 2,
-    "remaining_missing": 2,
-    "initial_duplicates": 1,
-    "remaining_duplicates": 1,
-    "initial_inconsistent": 1,
-    "remaining_inconsistent": 1,
-    "destructive_actions": 1,
-    "approval_violations": 1
+    "task_id": "medium",
+    "step_count": 15,
+    "max_steps": 25,
+    "data_quality_score": 0.85,
+    "initial_issues": 10,
+    "issues_remaining": 2,
+    "actions_taken": [],
+    "approved_action_types": [],
+    "unapproved_attempts": 0,
+    "done": True
 }
 
-score = grade_state(state)
+score = grade_from_dict(state)
 
-print("Score:", score)
+print(f"Final Score calculated by Grader: {score}")

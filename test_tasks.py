@@ -1,13 +1,11 @@
-from tasks import get_task, list_tasks
+from tasks import TASKS
 
-print("Available tasks:", list_tasks())
+print("Available tasks in registry:", list(TASKS.keys()))
 
-task = get_task("easy")
-
-print("\nTask details:")
-print("Name:", task.name)
-print("CSV:", task.csv_path)
-print("Difficulty:", task.difficulty)
-print("Max steps:", task.max_steps)
-print("Expected issues:", task.expected_issue_types)
-print("Approval policy:", task.approval_policy)
+for task_id, task in TASKS.items():
+    print(f"\n--- Task: {task_id} ---")
+    print("Description:", task.description)
+    print("Dataset Path:", task.dataset_filename)
+    print("Max Steps:", task.max_steps)
+    print("Expected Issues:", task.expected_issue_types)
+    print("Approval Needed For:", task.approval_required_for)
