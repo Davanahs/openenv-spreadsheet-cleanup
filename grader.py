@@ -1,39 +1,81 @@
+"""
+Grader for the Spreadsheet Data Cleanup environment.
+
+Takes the final EnvState + environment reference and produces a
+deterministic score between 0.0 and 1.0.
+"""
+
+from __future__ import annotations
+
 from typing import Dict
 
-
-def _safe_ratio(resolved: int, total: int) -> float:
-    if total <= 0:
-        return 1.0
-    return max(0.0, min(1.0, resolved / total))
+from env import SpreadsheetCleanupEnv
+from models import EnvState
 
 
-def grade_state(final_state: Dict) -> float:
-    initial_missing = int(final_state.get("initial_missing", 0))
-    initial_duplicates = int(final_state.get("initial_duplicates", 0))
-    initial_inconsistent = int(final_state.get("initial_inconsistent", 0))
+def grade(env_state: EnvState, env: SpreadsheetCleanupEnv) -> float:
+    """
+    Compute a final score for a completed (or timed-out) episode.
 
-    remaining_missing = int(final_state.get("remaining_missing", 0))
-    remaining_duplicates = int(final_state.get("remaining_duplicates", 0))
-    remaining_inconsistent = int(final_state.get("remaining_inconsistent", 0))
+    Score formula (weighted):
+        - Issues fixed   (50 %): proportion of initial issues resolved
+        - Data quality   (30 %): final data_quality_score
+        - Efficiency     (10 %): (1 - steps_used / max_steps)
+        - Compliance     (10 %): penalty for unapproved action attempts
 
-    destructive_actions = int(final_state.get("destructive_actions", 0))
-    approval_violations = int(final_state.get("approval_violations", 0))
+    Returns a float in [0.0, 1.0].
+    """
+    # --- Issues fixed (50 %) ---
+    if env_state.initial_issues > 0:
+        issues_fixed_ratio = (
+            (env_state.initial_issues - env_state.issues_remaining)
+            / env_state.initial_issues
+        )
+    else:
+        issues_fixed_ratio = 1.0
+    issues_fixed_score = max(0.0, min(1.0, issues_fixed_ratio))
 
-    resolved_missing = max(0, initial_missing - remaining_missing)
-    resolved_duplicates = max(0, initial_duplicates - remaining_duplicates)
-    resolved_inconsistent = max(0, initial_inconsistent - remaining_inconsistent)
+    # --- Data quality (30 %) ---
+    quality_score = max(0.0, min(1.0, env_state.data_quality_score))
 
-    missing_score = _safe_ratio(resolved_missing, initial_missing)
-    duplicates_score = _safe_ratio(resolved_duplicates, initial_duplicates)
-    inconsistent_score = _safe_ratio(resolved_inconsistent, initial_inconsistent)
+    # --- Efficiency (10 %) ---
+    if env_state.max_steps > 0:
+        efficiency_score = 1.0 - (env_state.step_count / env_state.max_steps)
+    else:
+        efficiency_score = 1.0
+    efficiency_score = max(0.0, min(1.0, efficiency_score))
 
-    raw_score = (
-        0.4 * missing_score
-        + 0.3 * duplicates_score
-        + 0.3 * inconsistent_score
+    # --- Compliance (10 %) ---
+    if env_state.unapproved_attempts == 0:
+        compliance_score = 1.0
+    else:
+        # Each unapproved attempt reduces compliance by 0.25 (capped at 0)
+        compliance_score = max(0.0, 1.0 - 0.25 * env_state.unapproved_attempts)
+
+    # --- Repeated Useless Actions Penalty ---
+    # We consider an action useless if it yields a reward of <= 0.0
+    useless_steps = sum(1 for action in env_state.actions_taken if action.get("reward", 0.0) <= 0.0)
+    over_action_penalty = 0.1 if useless_steps > 3 else 0.0
+
+    # --- Precision Bonus ---
+    minimal_steps_threshold = max(3, int(env_state.max_steps * 0.5))
+    precision_bonus = 0.0
+    if env_state.issues_remaining == 0 and env_state.step_count <= minimal_steps_threshold:
+        precision_bonus = 0.05
+
+    # --- Weighted total ---
+    final_score = (
+        0.50 * issues_fixed_score
+        + 0.30 * quality_score
+        + 0.10 * efficiency_score
+        + 0.10 * compliance_score
     )
+    final_score = final_score - over_action_penalty + precision_bonus
+    return float(round(max(0.0, min(1.0, float(final_score))), 4))
 
-    penalty = min(0.3, (destructive_actions * 0.1) + (approval_violations * 0.1))
-    final_score = raw_score - penalty
 
-    return max(0.0, min(1.0, final_score))
+def grade_from_dict(state_dict: Dict) -> float:
+    """Convenience: grade from a raw state dict (e.g. from the API)."""
+    env_state = EnvState(**state_dict)
+    # We don't need the live env object for scoring — all data is in EnvState
+    return grade(env_state, env=None)  # type: ignore[arg-type]

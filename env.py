@@ -1,202 +1,380 @@
+"""
+Spreadsheet Data Cleanup — Environment Engine.
+
+Implements the core reset() / step() / state() loop.
+"""
+
+from __future__ import annotations
+
+import copy
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
+
+from models import (
+    Action,
+    ActionType,
+    ColumnStats,
+    EnvState,
+    FillStrategy,
+    Observation,
+    StepResult,
+)
+from tasks import TaskConfig, get_task
 from utils import (
-    detect_missing,
+    build_issues_summary,
+    compute_data_quality_score,
+    count_inconsistent_cells,
+    count_total_issues,
+    count_total_missing,
     detect_duplicates,
     detect_inconsistent,
-    normalize_column,
-    fill_missing
+    detect_missing,
+    deterministic_approval,
 )
-import os
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-
-# ---------------- AI AGENT ----------------
-class SimpleAgent:
-    def __init__(self):
-        self.action_scores = {}
-
-    def select_action(self, observation):
-        print("\n---- AGENT THINKING ----")
-        issues = observation["issues"]
-        actions = []
-
-        for col in issues["inconsistent_columns"]:
-            actions.append(("normalize_values", col))
-
-        if issues["duplicate_count"] > 0:
-            actions.append(("remove_duplicates", None))
-
-        for col in issues["missing_columns"]:
-            actions.append(("fill_missing", col))
-
-        if not actions:
-            print("No actions available")
-            return None
-
-        best = max(actions, key=lambda a: self.action_scores.get(a, 0))
-        print("Decision:", best)
-
-        return {"action_type": best[0], "column": best[1]}
-
-    def update(self, action, reward):
-        print("Agent learning. Reward:", reward)
-        key = (action["action_type"], action.get("column"))
-        self.action_scores[key] = self.action_scores.get(key, 0) + reward
+# Number of sample rows to include in observations
+_SAMPLE_ROWS = 5
 
 
-# ---------------- ENV ----------------
 class SpreadsheetCleanupEnv:
+    """
+    OpenEnv-compatible environment for spreadsheet data cleanup.
 
-    def __init__(self):
-        print("Environment initialized")
-        self.df = None
-        self.step_count = 0
-        self.max_steps = 10
-        self.agent = SimpleAgent()
+    Lifecycle:
+        env = SpreadsheetCleanupEnv()
+        obs = env.reset("easy")
+        while not obs.done:
+            result = env.step(action)
+            obs = result.observation
+        final = env.state()
+    """
 
-    def reset(self, data):
-        print("Reset called")
-        if isinstance(data, dict) and "data" in data:
-            data = data["data"]
+    def __init__(self) -> None:
+        self._df: Optional[pd.DataFrame] = None
+        self._original_df: Optional[pd.DataFrame] = None
+        self._task: Optional[TaskConfig] = None
+        self._step_count: int = 0
+        self._done: bool = True
+        self._actions_log: List[Dict[str, Any]] = []
+        self._approved_actions: set = set()
+        self._unapproved_attempts: int = 0
 
-        self.df = pd.DataFrame(data)
-        self.step_count = 0
+        # Baseline issue counts (set at reset)
+        self._initial_missing: int = 0
+        self._initial_duplicates: int = 0
+        self._initial_inconsistent: int = 0
+        self._initial_total_issues: int = 0
+        self._last_column_stats: Optional[ColumnStats] = None
 
-        return self._get_observation()
+    # ------------------------------------------------------------------
+    # reset
+    # ------------------------------------------------------------------
 
-    def step(self, action=None):
-        print("\n================ STEP", self.step_count + 1, "================")
+    def reset(self, task_id: str) -> Observation:
+        """Initialise a new episode for *task_id*."""
+        self._task = get_task(task_id)
+        self._df = pd.read_csv(self._task.dataset_filename) # type: ignore
+        self._original_df = self._df.copy(deep=True) # type: ignore
+        self._step_count = 0
+        self._done = False
+        self._actions_log = []
+        self._approved_actions = set()
+        self._unapproved_attempts = 0
 
-        if self.df is None:
-            return {"error": "Load data first"}
+        # Record baseline issues
+        self._initial_missing = count_total_missing(self._df)
+        self._initial_duplicates = detect_duplicates(self._df)
+        self._initial_inconsistent = count_inconsistent_cells(self._df)
+        self._initial_total_issues = (
+            self._initial_missing + self._initial_duplicates + self._initial_inconsistent
+        )
 
-        # -------- BEFORE STATE --------
-        before_df = self.df.copy()
-        observation = self._get_observation()
+        return self._build_observation(
+            message=(
+                f"Environment reset for task '{task_id}' ({self._task.difficulty}). " # type: ignore
+                f"Dataset has {len(self._df)} rows × {len(self._df.columns)} columns. " # type: ignore
+                f"Detected issues: {self._initial_total_issues} total "
+                f"({self._initial_missing} missing, {self._initial_duplicates} duplicates, "
+                f"{self._initial_inconsistent} inconsistent values). "
+                f"You have {self._task.max_steps} steps." # type: ignore
+            )
+        )
 
-        print("\n---- AGENT OBSERVATION (BEFORE) ----")
-        print(observation)
+    # ------------------------------------------------------------------
+    # step
+    # ------------------------------------------------------------------
 
-        print("\n---- DATA BEFORE ----")
-        print(before_df.head())
+    def step(self, action: Action) -> StepResult:
+        """Apply *action* and return the result."""
+        if self._done:
+            return StepResult(
+                observation=self._build_observation("Episode is already done."),
+                reward=0.0,
+                done=True,
+                info={"error": "Episode already finished"},
+            )
 
-        self.step_count += 1
-        reward = 0.0
+        if self._df is None or self._task is None:
+            return StepResult(
+                observation=self._build_observation("Call reset() first."),
+                reward=0.0,
+                done=False,
+                info={"error": "Not initialised"},
+            )
 
-        # -------- AGENT DECISION --------
-        if action is None:
-            action = self.agent.select_action(observation)
-            if action is None:
-                print("\nNo actions available")
-                return {
-                    "observation": observation,
-                    "reward": 1.0,
-                    "done": True,
-                    "available_actions": []
-                }
+        self._step_count += 1
+        prev_score = self._quality_score()
 
-        print("\n---- AGENT ACTION ----")
-        print(action)
-
-        action_type = action.get("action_type")
-        column = action.get("column")
-
-        # -------- APPLY ACTION --------
-        try:
-            if action_type == "fill_missing":
-                self.df = fill_missing(self.df, column)
-                reward = 0.3
-
-            elif action_type == "normalize_values":
-                self.df = normalize_column(self.df, column)
-                reward = 0.25
-
-            elif action_type == "remove_duplicates":
-                before = len(self.df)
-                self.df = self.df.drop_duplicates()
-                reward = 0.3 if len(self.df) < before else 0
-
-        except Exception as e:
-            print("Step error:", e)
-            reward = -0.2
-
-        # -------- AFTER STATE --------
-        print("\n---- DATA AFTER ----")
-        print(self.df.head())
-
-        print("\n---- REWARD ----")
-        print(reward)
-
-        self.agent.update(action, reward)
-
-        print("====================================\n")
-
-        return {
-            "observation": self._get_observation(),
-            "reward": reward,
-            "done": self.step_count >= self.max_steps,
-            "available_actions": self._available_actions()
+        # Dispatch
+        handler_map = {
+            ActionType.INSPECT_COLUMN: self._handle_inspect,
+            ActionType.FILL_MISSING: self._handle_fill_missing,
+            ActionType.NORMALIZE_VALUES: self._handle_normalize,
+            ActionType.REMOVE_DUPLICATES: self._handle_remove_duplicates,
+            ActionType.REQUEST_APPROVAL: self._handle_request_approval,
         }
+        handler = handler_map.get(action.action_type)
 
-    def auto_clean(self):
-        print("Auto clean started")
-        history = []
+        if handler is None:
+            msg = f"Unknown action type: {action.action_type}"
+            reward = -0.1
+        else:
+            msg, reward = handler(action)
 
-        for _ in range(self.max_steps):
-            action = self.agent.select_action(self._get_observation())
-            if action is None:
-                break
+        # Reward = improvement in quality score (plus any per-action bonus/penalty)
+        new_score = self._quality_score()
+        reward += (new_score - prev_score) * 2.0  # amplify quality delta
 
-            result = self.step(action)
-            history.append(result)
+        # Check termination
+        if self._task and self._step_count >= self._task.max_steps:
+            self._done = True
+            msg += " Max steps reached — episode done."
+        elif count_total_issues(self._df) == 0:
+            self._done = True
+            msg += " All issues resolved — episode done!"
 
-        print("Auto clean finished")
+        # Log
+        self._actions_log.append({
+            "step": self._step_count,
+            "action_type": action.action_type.value,
+            "column": action.column,
+            "reward": round(reward, 4),
+        })
 
-        return {
-            "message": "AI auto clean complete",
-            "history": history,
-            "final": self.state()
-        }
+        obs = self._build_observation(msg)
+        return StepResult(
+            observation=obs,
+            reward=float(round(reward, 4)),
+            done=self._done,
+            info={},
+        )
 
-    def _get_observation(self):
-        if self.df is None:
-            return {}
+    # ------------------------------------------------------------------
+    # state
+    # ------------------------------------------------------------------
 
-        return {
-            "columns": list(self.df.columns),
-            "issues": {
-                "missing_columns": list(detect_missing(self.df)),
-                "duplicate_count": int(detect_duplicates(self.df)),
-                "inconsistent_columns": list(detect_inconsistent(self.df))
-            },
-            "step_count": int(self.step_count)
-        }
+    def state(self) -> EnvState:
+        """Return a snapshot of the episode state."""
+        return EnvState(
+            task_id=self._task.task_id if self._task else "",
+            step_count=self._step_count,
+            max_steps=self._task.max_steps if self._task else 0,
+            data_quality_score=float(round(self._quality_score(), 4)),
+            initial_issues=self._initial_total_issues,
+            issues_remaining=count_total_issues(self._df) if self._df is not None else 0,
+            actions_taken=self._actions_log,
+            approved_action_types=sorted(self._approved_actions),
+            unapproved_attempts=self._unapproved_attempts,
+            done=self._done,
+        )
 
-    def _available_actions(self):
-        actions = []
-        obs = self._get_observation()
+    # ------------------------------------------------------------------
+    # Action handlers
+    # ------------------------------------------------------------------
 
-        for col in obs["issues"]["missing_columns"]:
-            actions.append({"action_type": "fill_missing", "column": col})
+    def _handle_inspect(self, action: Action):
+        col = action.column
+        if self._df is None or not col: return "Call reset() first.", -0.05
+        if col not in self._df.columns:
+            return (
+                f"Column '{col}' not found. Available: {list(self._df.columns)}",
+                -0.05,
+            )
 
-        for col in obs["issues"]["inconsistent_columns"]:
-            actions.append({"action_type": "normalize_values", "column": col})
+        series = self._df[col]
+        stats = ColumnStats(
+            name=col,
+            dtype=str(series.dtype),
+            total_count=len(series),
+            non_null_count=int(series.count()),
+            missing_count=int(series.isnull().sum()),
+            unique_count=int(series.nunique()),
+            top_values=series.value_counts().head(5).index.tolist(),
+            sample_values=series.dropna().head(5).tolist(),
+        )
+        self._last_column_stats = stats
+        return (
+            f"Inspected column '{col}': {stats.missing_count} missing, "
+            f"{stats.unique_count} unique values.",
+            0.01,  # small positive reward for gathering info
+        )
 
-        if obs["issues"]["duplicate_count"] > 0:
-            actions.append({"action_type": "remove_duplicates", "column": None})
+    def _handle_fill_missing(self, action: Action):
+        col = action.column
+        if self._df is None or not col or col not in self._df.columns:
+            return f"Column '{col}' not found.", -0.05
 
-        return actions
+        # Approval check
+        if not self._check_approval("fill_missing"):
+            return (
+                "Action 'fill_missing' requires approval on this task. "
+                "Use request_approval first.",
+                -0.2,
+            )
 
-    def state(self):
-        if self.df is None:
-            return {"error": "No data loaded"}
+        missing_before = int(self._df[col].isnull().sum())
+        if missing_before == 0:
+            return f"No missing values in '{col}'.", -0.05
 
-        clean_df = self.df.copy()
-        clean_df = clean_df.replace({pd.NA: None})
-        clean_df = clean_df.where(pd.notnull(clean_df), None)
+        strategy = action.strategy or FillStrategy.MODE
 
-        return {
-            "data": clean_df.to_dict(),
-            "step_count": int(self.step_count)
-        }
+        if strategy == FillStrategy.MEAN:
+            if pd.api.types.is_numeric_dtype(self._df[col]):
+                self._df[col] = self._df[col].fillna(self._df[col].mean())
+            else:
+                return f"Cannot use 'mean' on non-numeric column '{col}'.", -0.1
+        elif strategy == FillStrategy.MEDIAN:
+            if pd.api.types.is_numeric_dtype(self._df[col]):
+                self._df[col] = self._df[col].fillna(self._df[col].median())
+            else:
+                return f"Cannot use 'median' on non-numeric column '{col}'.", -0.1
+        elif strategy == FillStrategy.MODE:
+            mode_val = self._df[col].mode()
+            if len(mode_val) > 0:
+                self._df[col] = self._df[col].fillna(mode_val.iloc[0])
+            else:
+                return f"No mode available for '{col}'.", -0.05
+        elif strategy == FillStrategy.VALUE:
+            if action.fill_value is None:
+                return "Strategy 'value' requires fill_value.", -0.1
+            self._df[col] = self._df[col].fillna(action.fill_value)
+        elif strategy == FillStrategy.FORWARD_FILL:
+            self._df[col] = self._df[col].ffill()
+
+        missing_after = int(self._df[col].isnull().sum())
+        filled = missing_before - missing_after
+        return (
+            f"Filled {filled} missing values in '{col}' using {strategy.value}.",
+            0.05 * filled,
+        )
+
+    def _handle_normalize(self, action: Action):
+        col = action.column
+        if self._df is None or not col or col not in self._df.columns:
+            return f"Column '{col}' not found.", -0.05
+
+        mapping = action.mapping
+        if not mapping:
+            return "normalize_values requires a 'mapping' dict.", -0.1
+
+        cells_changed = 0
+        for old_val, new_val in mapping.items():
+            mask = self._df[col].astype(str).str.strip() == old_val # type: ignore
+            n = int(mask.sum()) # type: ignore
+            if n > 0:
+                self._df.loc[mask, col] = new_val # type: ignore
+                cells_changed += n
+
+        if cells_changed == 0:
+            return f"No matching values found in '{col}' for the given mapping.", -0.05
+
+        return (
+            f"Normalized {cells_changed} values in '{col}'.",
+            0.05 * cells_changed,
+        )
+
+    def _handle_remove_duplicates(self, action: Action):
+        # Approval check
+        if not self._check_approval("remove_duplicates"):
+            return (
+                "Action 'remove_duplicates' requires approval on this task. "
+                "Use request_approval first.",
+                -0.2,
+            )
+
+        if self._df is None: return "Call reset() first.", -0.05
+
+        cols = [c for c in self._df.columns if c.lower() != "id"]
+        if not cols:
+            cols = list(self._df.columns)
+
+        before = len(self._df)
+        self._df = self._df.drop_duplicates(subset=cols, keep="first").reset_index(drop=True)
+        removed = before - len(self._df)
+
+        if removed == 0:
+            return "No duplicate rows found.", -0.02
+        return f"Removed {removed} duplicate rows.", 0.1 * removed
+
+    def _handle_request_approval(self, action: Action):
+        target = action.target_action
+        if target is None:
+            return "request_approval requires 'target_action'.", -0.1
+
+        target_str = target.value if hasattr(target, "value") else str(target)
+        self._approved_actions.add(target_str)
+        return (
+            f"Approval granted for '{target_str}'.",
+            0.02,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _check_approval(self, action_type_str: str) -> bool:
+        """Return True if the action is allowed (either no approval needed or approved)."""
+        if self._task is None:
+            return True
+        if action_type_str not in self._task.approval_required_for: # type: ignore
+            return True  # task doesn't require approval for this action
+        approved = deterministic_approval(action_type_str, self._approved_actions)
+        if not approved:
+            self._unapproved_attempts += 1
+        return approved
+
+    def _quality_score(self) -> float:
+        if self._df is None:
+            return 0.0
+        return compute_data_quality_score(
+            self._df,
+            self._initial_missing,
+            self._initial_duplicates,
+            self._initial_inconsistent,
+        )
+
+    def _build_observation(self, message: str) -> Observation:
+        if self._df is None:
+            return Observation(message=message, done=self._done)
+
+        sample = self._df.head(_SAMPLE_ROWS).fillna("").to_dict(orient="records")
+        issues = build_issues_summary(self._df)
+
+        column_stats = getattr(self, "_last_column_stats", None)
+        self._last_column_stats = None  # consume
+
+        return Observation(
+            message=message,
+            data_sample=sample,
+            column_names=list(self._df.columns), # type: ignore
+            total_rows=len(self._df), # type: ignore
+            total_columns=len(self._df.columns), # type: ignore
+            column_stats=column_stats,
+            issues_summary=issues,
+            data_quality_score=float(round(self._quality_score(), 4)),
+            approval_status={a: True for a in self._approved_actions},
+            step_count=self._step_count,
+            max_steps=self._task.max_steps if self._task else 0, # type: ignore
+            done=self._done,
+        )

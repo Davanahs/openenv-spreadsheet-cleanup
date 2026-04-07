@@ -1,80 +1,95 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from typing import Optional
-import pandas as pd
-import io
-from models import Action
-from typing import Optional
+"""
+FastAPI application for the Spreadsheet Data Cleanup environment.
+
+Exposes the OpenEnv-compatible HTTP endpoints:
+    POST /reset   — start a new episode
+    POST /step    — take an action
+    GET  /state   — get current episode state
+    GET  /tasks   — list available tasks
+    GET  /        — health check
+"""
+
+from __future__ import annotations
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from env import SpreadsheetCleanupEnv
+from models import Action, EnvState, Observation, ResetRequest, StepResult
+from tasks import TASKS
 
-app = FastAPI(title="Spreadsheet Cleanup Agent")
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
 
+app = FastAPI(
+    title="Spreadsheet Data Cleanup — OpenEnv Environment",
+    description=(
+        "An OpenEnv environment that evaluates AI agents on their ability "
+        "to clean messy spreadsheet data."
+    ),
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Shared environment instance (single-episode; stateful per server process)
 env = SpreadsheetCleanupEnv()
 
 
-@app.post("/load_data")
-async def load_data(
-    file: Optional[UploadFile] = File(None),
-    url: Optional[str] = Form(None),
-    dataset: Optional[str] = Form(None),
-    auto: bool = Form(True)
-):
-    df = None
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
-    try:
-        if file:
-            contents = await file.read()
-            if file.filename.endswith(".csv"):
-                df = pd.read_csv(io.BytesIO(contents))
-            elif file.filename.endswith(".xlsx"):
-                df = pd.read_excel(io.BytesIO(contents))
+@app.get("/", tags=["health"])
+def health_check():
+    """Health-check endpoint."""
+    return {
+        "status": "ok",
+        "environment": "spreadsheet_cleanup_env",
+        "version": "1.0.0",
+    }
 
-        elif url:
-            df = pd.read_csv(url)
 
-        elif dataset:
-            df = pd.read_json(io.StringIO(dataset))
-
-        else:
-            return {"error": "No input provided"}
-
-        env.reset(df.to_dict(orient="list"))
-
-        # AUTO MODE DEFAULT
-        if auto:
-            return env.auto_clean()
-
-        # MANUAL MODE
-        return {
-            "message": "Manual mode started",
-            "state": env.state(),
-            "available_actions": env._available_actions()
+@app.get("/tasks", tags=["tasks"])
+def list_tasks():
+    """List all available tasks and their metadata."""
+    return [
+        {
+            "task_id": t.task_id,
+            "difficulty": t.difficulty,
+            "description": t.description,
+            "max_steps": t.max_steps,
+            "expected_issues": t.expected_issue_types,
+            "approval_required_for": t.approval_required_for,
         }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.post("/step")
-def step(action: Optional[Action] = None):
-    """
-    Take one cleaning step.
-    
-    Example actions:
-    - fill_missing
-    - normalize_values
-    - remove_duplicates
-    """
-    if action:
-        return env.step(action.dict())
-    return env.step()
+        for t in TASKS.values()
+    ]
 
 
-@app.get("/state")
+@app.post("/reset", response_model=Observation, tags=["environment"])
+def reset(body: ResetRequest):
+    """Reset the environment with a given task."""
+    try:
+        obs = env.reset(body.task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return obs
+
+
+@app.post("/step", response_model=StepResult, tags=["environment"])
+def step(action: Action):
+    """Take a single step in the environment."""
+    result = env.step(action)
+    return result
+
+
+@app.get("/state", response_model=EnvState, tags=["environment"])
 def state():
+    """Return the current state of the episode."""
     return env.state()
-
-
-@app.post("/reset")
-def reset(data: dict):
-    return env.reset(data)
