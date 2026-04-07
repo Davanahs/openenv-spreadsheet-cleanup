@@ -32,7 +32,7 @@ class Action(BaseModel):
 
 
 class ResetRequest(BaseModel):
-    task_id: str
+    task_id: str = "easy"
 
 
 class ColumnStats(BaseModel):
@@ -59,6 +59,12 @@ class Observation(BaseModel):
     step_count: Optional[int] = None
     max_steps: Optional[int] = None
     done: bool
+
+
+class ResetResponse(BaseModel):
+    observation: Observation
+    done: bool = False
+    info: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EnvState(BaseModel):

@@ -310,7 +310,8 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     print(f"{'='*60}")
 
     # Reset
-    obs = api_post("/reset", {"task_id": task_id})
+    result = api_post("/reset", {"task_id": task_id})
+    obs = result.get("observation", {})
     agent.reset(obs, task_meta)
     print(f"[reset] {obs.get('message', '')}")
     print(f"        Rows: {obs.get('total_rows')}, Cols: {obs.get('total_columns')}")
