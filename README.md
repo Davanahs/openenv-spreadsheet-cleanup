@@ -68,6 +68,8 @@ graph TD
 - `remove_duplicates`: Deduplicate identical rows.
 - `request_approval`: Ask for elevated permissions for a target restricted action.
 
+**Approval Workflow**: Certain environments (like `hard.csv`) restrict dangerous operations (like removing duplicates). If an agent tries to execute a restricted action without permission, the action will fail and the agent loses points. The agent must first output a `request_approval` action for the restricted operation, let the evaluator (or heuristic logic) grant approval, and *then* execute the actual cleanup action.
+
 ---
 
 ## 📋 Task Descriptions
@@ -130,6 +132,12 @@ source .venv/bin/activate  # macOS/Linux
 # Install dependencies
 pip install -r requirements.txt
 
+# Option A: Run LLM via HuggingFace (Recommended for evaluation)
+export HF_TOKEN="your_huggingface_token"
+
+# Option B: Run LLM natively via OpenAI
+export OPENAI_API_KEY="your_openai_key"
+
 # Start the server
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
@@ -152,12 +160,12 @@ Open [http://localhost:3000](http://localhost:3000) to view the dashboard.
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/reset` | `POST` | Start a new cleaning session (takes `task_id`). |
-| `/step` | `POST` | Perform a specific cleaning action. |
-| `/state` | `GET` | Get the full current state of the episode. |
+| `/reset` | `POST` | Start a new cleaning session (takes `task_id`). Returns `Observation`. |
+| `/step` | `POST` | Perform a specific cleaning action. Returns `StepResult` + new `Observation`. |
+| `/state` | `GET` | Get the full current state of the episode, including step counts. |
 | `/report` | `GET` | Generate a detailed summary of the current session. |
 | `/load_data` | `POST` | Upload custom CSV/Excel files for cleaning. |
-| `/ws` | `WS` | WebSocket endpoint for real-time log streaming. |
+| `/ws` | `WS` | WebSocket endpoint. Emits judge-compliant `[START]`, `[STEP]`, and `[END]` text strings in real-time. |
 
 ---
 
