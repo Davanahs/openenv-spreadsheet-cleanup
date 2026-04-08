@@ -133,8 +133,10 @@ def list_tasks():
 
 
 @app.post("/reset", response_model=ResetResponse, tags=["environment"])
-async def reset(body: ResetRequest):
+async def reset(body: Optional[ResetRequest] = None):
     """Reset the environment with a given task."""
+    if body is None:
+        body = ResetRequest()
     try:
         obs = env.reset(body.task_id)
         # Log to console in judge format
