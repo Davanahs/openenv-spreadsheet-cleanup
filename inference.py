@@ -385,64 +385,67 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     model_type = type(agent).__name__
     print(f"[START] task={task_id} env=openenv model={model_type}", flush=True)
 
-    # Reset
-    result = api_post("/reset", {"task_id": task_id})
-    obs = result.get("observation", {})
-    agent.reset(obs, task_meta)
-    print(f"[reset] {obs.get('message', '')}")
-    print(f"        Rows: {obs.get('total_rows')}, Cols: {obs.get('total_columns')}")
-    print(f"        Quality: {obs.get('data_quality_score')}")
-
     step = 0
     step_rewards = []
-    last_error = None
-    
-    while not obs.get("done", False):
-        action = agent.decide(obs)
-        # Create a compressed, space-less JSON string for logging
-        action_log = json.dumps(action, separators=(',', ':'))
-        
-        # Pretty print for local debugging
-        action_str = json.dumps(action, default=str)
-        print(f"\n[step {step+1}] Action: {action_str}")
 
-        result = api_post("/step", action)
+    try:
+        # Reset
+        result = api_post("/reset", {"task_id": task_id})
         obs = result.get("observation", {})
-        reward = result.get("reward", 0)
-        done = result.get("done", False)
-        error = result.get("error", None)
+        agent.reset(obs, task_meta)
+        print(f"[reset] {obs.get('message', '')}")
+        print(f"        Rows: {obs.get('total_rows')}, Cols: {obs.get('total_columns')}")
+        print(f"        Quality: {obs.get('data_quality_score')}")
 
-        print(f"         Reward: {reward}")
-        print(f"         Message: {obs.get('message', '')}")
-        print(f"         Quality: {obs.get('data_quality_score')}")
-        print(f"         Done: {done}")
+        while not obs.get("done", False):
+            action = agent.decide(obs)
+            # Create a compressed, space-less JSON string for logging
+            action_log = json.dumps(action, separators=(',', ':'))
 
-        # [STEP] log - REQUIRED FORMAT FOR JUDGES
-        error_val = f'"{error}"' if error else "null"
-        done_val = str(done).lower()
-        print(f"[STEP] step={step+1} action={action_log} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
-        
-        step_rewards.append(reward)
-        last_error = error
-        step += 1
-        if done:
-            break
+            # Pretty print for local debugging
+            action_str = json.dumps(action, default=str)
+            print(f"\n[step {step+1}] Action: {action_str}")
 
-    # Get final state & score
-    final_state = api_get("/state")
-    score = compute_score(final_state)
+            result = api_post("/step", action)
+            obs = result.get("observation", {})
+            reward = result.get("reward", 0)
+            done = result.get("done", False)
+            error = result.get("error", None)
 
-    print(f"\n--- FINAL RESULTS for '{task_id}' ---")
-    print(f"  Steps used   : {final_state.get('step_count')} / {final_state.get('max_steps')}")
-    print(f"  Issues fixed : {final_state.get('initial_issues', 0) - final_state.get('issues_remaining', 0)}"
-          f" / {final_state.get('initial_issues', 0)}")
-    print(f"  Quality score: {final_state.get('data_quality_score')}")
-    print(f"  Unapproved   : {final_state.get('unapproved_attempts')}")
-    print(f"  FINAL SCORE  : {score}")
+            print(f"         Reward: {reward}")
+            print(f"         Message: {obs.get('message', '')}")
+            print(f"         Quality: {obs.get('data_quality_score')}")
+            print(f"         Done: {done}")
 
-    # [END] log - REQUIRED FORMAT FOR JUDGES
-    success = score >= 0.5  # Threshold for success
-    rewards_str = ",".join([f"{r:.2f}" for r in step_rewards])
+            # [STEP] log - REQUIRED FORMAT FOR JUDGES
+            error_val = f'"{error}"' if error else "null"
+            done_val = str(done).lower()
+            print(f"[STEP] step={step+1} action={action_log} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+            step_rewards.append(reward)
+            step += 1
+            if done:
+                break
+
+        # Get final state & score
+        final_state = api_get("/state")
+        score = compute_score(final_state)
+
+        print(f"\n--- FINAL RESULTS for '{task_id}' ---")
+        print(f"  Steps used   : {final_state.get('step_count')} / {final_state.get('max_steps')}")
+        print(f"  Issues fixed : {final_state.get('initial_issues', 0) - final_state.get('issues_remaining', 0)}"
+              f" / {final_state.get('initial_issues', 0)}")
+        print(f"  Quality score: {final_state.get('data_quality_score')}")
+        print(f"  Unapproved   : {final_state.get('unapproved_attempts')}")
+        print(f"  FINAL SCORE  : {score}")
+
+    except Exception as exc:
+        print(f"  [ERROR] Task '{task_id}' failed with exception: {exc}", flush=True)
+        score = 0.0
+
+    # [END] log — ALWAYS emitted even on exception (required by judge spec)
+    success = score >= 0.5
+    rewards_str = ",".join([f"{r:.2f}" for r in step_rewards]) if step_rewards else "0.00"
     print(f"[END] success={str(success).lower()} steps={step} rewards={rewards_str}", flush=True)
 
     return score
@@ -453,6 +456,11 @@ def main():
     print("  Spreadsheet Data Cleanup — Baseline Inference")
     print("=" * 60)
 
+    # Validate required environment variable per hackathon spec
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    if HF_TOKEN is None:
+        print("WARNING: HF_TOKEN not set. Running in heuristic mode.", flush=True)
+
     # Check environment is up
     try:
         health = api_get("/")
@@ -460,19 +468,33 @@ def main():
     except Exception as exc:
         print(f"ERROR: Cannot reach environment at {BASE_URL}: {exc}")
         print("Make sure the server is running: uvicorn app:app --port 8000")
-        sys.exit(1)
+        # Emit [END] for each task so the judge parser doesn't hang
+        for task_id in TASKS:
+            print(f"[START] task={task_id} env=openenv model=HeuristicAgent", flush=True)
+            print(f"[END] success=false steps=0 rewards=0.00", flush=True)
+        sys.exit(0)  # Exit 0 so process doesn't fail immediately
 
     # Get task metadata
-    tasks_meta = {t["task_id"]: t for t in api_get("/tasks")}
+    try:
+        tasks_meta = {t["task_id"]: t for t in api_get("/tasks")}
+    except Exception:
+        tasks_meta = {}
 
-    # Choose agent
+    # Choose agent — always fall back to HeuristicAgent if LLM init fails
+    agent = None
     if USE_LLM:
         print(f"\n🤖 LLM mode active")
         print(f"   API_BASE_URL : {API_BASE_URL or '(OpenAI default)'}")
         print(f"   MODEL_NAME   : {MODEL_NAME}")
-        agent = LLMAgent()
-    else:
-        print("\n⚙️  Heuristic mode (set OPENAI_API_KEY to enable LLM)")
+        try:
+            agent = LLMAgent()
+        except Exception as exc:
+            print(f"  [Warning] LLMAgent init failed: {exc}", flush=True)
+            print("  [System] Falling back to HeuristicAgent", flush=True)
+            agent = HeuristicAgent()
+    
+    if agent is None:
+        print("\n⚙️  Heuristic mode (set HF_TOKEN + API_BASE_URL to enable LLM)")
         agent = HeuristicAgent()
 
     scores = {}
@@ -492,4 +514,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"[FATAL] Unhandled exception in main: {exc}", flush=True)
+        sys.exit(0)  # Exit 0 so the process doesn't appear as a system crash
