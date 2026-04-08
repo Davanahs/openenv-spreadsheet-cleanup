@@ -29,7 +29,7 @@ load_dotenv()  # picks up .env so OPENAI_API_KEY / API_BASE_URL are available
 # ---------------------------------------------------------------------------
 # Agent mode detection (read once at startup)
 # ---------------------------------------------------------------------------
-_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", ""))
+_OPENAI_API_KEY = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "")))
 _API_BASE_URL   = os.getenv("API_BASE_URL", "")
 _MODEL_NAME     = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 USE_LLM = bool(_OPENAI_API_KEY)

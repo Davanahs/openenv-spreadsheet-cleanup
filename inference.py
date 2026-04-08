@@ -37,7 +37,7 @@ load_dotenv()
 BASE_URL      = os.getenv("BASE_URL", "http://localhost:8000")
 API_BASE_URL  = os.getenv("API_BASE_URL", "")   # empty → OpenAI default
 # Hackathon judge sets HF_TOKEN, but we support OPENAI_API_KEY for local usage
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", ""))
+OPENAI_API_KEY = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "")))
 MODEL_NAME    = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 TASKS = ["easy", "medium", "hard"]
 
@@ -257,61 +257,24 @@ class LLMAgent:
     )
 
     def __init__(self) -> None:
-        from openai import OpenAI, AuthenticationError
-        self.api_key = os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "dummy"))
+        from openai import OpenAI
+        self.api_key = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "dummy")))
         
-        # Automatically setup the correct base URL based on key prefix if possible
+        # Use exact provided API base URL for LiteLLM Hackathon proxy
         api_base_url = API_BASE_URL
-        if self.api_key.startswith("gsk_"):
-            # It's a Groq key
-            if "openai" in api_base_url.lower() and "groq" not in api_base_url.lower():
-                api_base_url = "https://api.groq.com/openai/v1"
-            elif not api_base_url:
-                api_base_url = "https://api.groq.com/openai/v1"
-        elif self.api_key.startswith("sk-") and not api_base_url:
-            api_base_url = "https://api.openai.com/v1"
-        
+        if not api_base_url and self.api_key.startswith("gsk_"):
+            api_base_url = "https://api.groq.com/openai/v1"
+            
         self._client = OpenAI(
             base_url=api_base_url if api_base_url else None,
             api_key=self.api_key,
         )
         self._history: List[Dict[str, str]] = []
         
-        # Dynamically fetch all models available for this API key
-        print("  [System] Fetching available models for API key...")
-        try:
-            models_response = self._client.models.list()
-            all_models = [m.id for m in models_response.data]
-            
-            # Filter out known non-text-generation models
-            filtered_models = [m for m in all_models if all(
-                block not in m.lower() for block in ["prompt-guard", "embed", "whisper", "tts", "dall-e", "vision", "moderation"]
-            )]
-            
-            # 1. Start with the user's preferred MODEL_NAME if it's in the list
-            self.available_models = []
-            env_model = os.getenv("MODEL_NAME")
-            if env_model and env_model in filtered_models:
-                self.available_models.append(env_model)
-                filtered_models.remove(env_model)
-            
-            # 2. Add all other valid chat models as fallbacks
-            self.available_models.extend(filtered_models)
-            
-            if not self.available_models:
-                # If everything was filtered or list is empty, use raw list as absolute last resort
-                self.available_models = all_models[:3]
-
-            print(f"  [System] Found {len(self.available_models)} available chat models.")
-            print(f"  [System] Primary model: {self.available_models[0]}")
-
-        except AuthenticationError as e:
-            print(f"  [Error] Authentication failed: {e}")
-            raise 
-        except Exception as e:
-            print(f"  [Error] Failed to fetch models: {e}")
-            # Absolute fallback if API is down or list fails
-            self.available_models = [os.getenv("MODEL_NAME") or "gpt-4o-mini"]
+        # Strictly use provided MODEL_NAME (no dynamic fallback for proxy compliance)
+        env_model = os.getenv("MODEL_NAME", MODEL_NAME)
+        self.available_models = [env_model]
+        print(f"  [System] Using strict Hackathon proxy model: {self.available_models[0]}")
 
     def reset(self, obs: Dict[str, Any], task_meta=None):
         pass # History is built fresh each step to avoid context window limits
