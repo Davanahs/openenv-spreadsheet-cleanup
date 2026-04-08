@@ -27,7 +27,7 @@ class Action(BaseModel):
     column: Optional[str] = None
     strategy: Optional[FillStrategy] = None
     mapping: Optional[Dict[str, str]] = None
-    target_action: Optional[str] = None  # Changed from ActionType to str
+    target_action: Optional[str] = None
     fill_value: Optional[Any] = None
 
 
@@ -46,19 +46,34 @@ class ColumnStats(BaseModel):
     sample_values: List[Any]
 
 
+class Issue(BaseModel):
+    column: str
+    type: str
+    rows: List[int]
+
+
+class IssuesSummary(BaseModel):
+    """Frontend-compatible issues summary with flat integer counts."""
+    missing: int = 0
+    duplicates: int = 0
+    inconsistent: int = 0
+
+
 class Observation(BaseModel):
+    task_id: str = ""
     message: str
     data_sample: Optional[List[Dict[str, Any]]] = None
-    column_names: Optional[List[str]] = None
+    columns: Optional[List[str]] = None
     total_rows: Optional[int] = None
     total_columns: Optional[int] = None
     column_stats: Optional[ColumnStats] = None
-    issues_summary: Optional[Dict[str, Any]] = None
-    data_quality_score: Optional[float] = None
+    issues_summary: IssuesSummary = Field(default_factory=IssuesSummary)
+    quality_score: float = 0.0
+    issues: List[Issue] = Field(default_factory=list)
     approval_status: Optional[Dict[str, bool]] = None
-    step_count: Optional[int] = None
-    max_steps: Optional[int] = None
-    done: bool
+    step_count: int = 0
+    max_steps: int = 0
+    done: bool = False
 
 
 class ResetResponse(BaseModel):
@@ -84,4 +99,23 @@ class StepResult(BaseModel):
     observation: Observation
     reward: float
     done: bool
-    info: Dict[str, Any]
+    message: str = ""
+    available_actions: List[str] = Field(default_factory=list)
+    info: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportResponse(BaseModel):
+    task_id: str
+    steps_used: int
+    max_steps: int
+    issues_fixed: int
+    initial_issues: int
+    quality_score: float
+    unapproved_attempts: int
+    final_score: float
+    success: bool
+
+
+class SuiteSummary(BaseModel):
+    scores: Dict[str, float]
+    average_score: float

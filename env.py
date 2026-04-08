@@ -31,6 +31,7 @@ from utils import (
     detect_inconsistent,
     detect_missing,
     deterministic_approval,
+    get_detailed_issues,
 )
 
 
@@ -195,6 +196,8 @@ class SpreadsheetCleanupEnv:
             observation=obs,
             reward=float(round(reward, 4)),
             done=self._done,
+            message=msg,
+            available_actions=[a.value for a in ActionType],
             info={},
         )
 
@@ -406,24 +409,27 @@ class SpreadsheetCleanupEnv:
         if self._df is None:
             return Observation(message=message, done=self._done)
 
-        # 🔴 Show ALL rows instead of a sample
+        # Show ALL rows
         sample = self._df.fillna("").to_dict(orient="records")
         issues = build_issues_summary(self._df)
+        detailed_issues = get_detailed_issues(self._df)
 
         column_stats = getattr(self, "_last_column_stats", None)
         self._last_column_stats = None  # consume
 
         return Observation(
+            task_id=self._task.task_id if self._task else "custom",
             message=message,
             data_sample=sample,
-            column_names=list(self._df.columns), # type: ignore
-            total_rows=len(self._df), # type: ignore
-            total_columns=len(self._df.columns), # type: ignore
+            columns=list(self._df.columns),
+            total_rows=len(self._df),
+            total_columns=len(self._df.columns),
             column_stats=column_stats,
             issues_summary=issues,
-            data_quality_score=float(round(self._quality_score(), 4)),
+            issues=detailed_issues,
+            quality_score=float(round(self._quality_score(), 4)),
             approval_status={a: True for a in self._approved_actions},
             step_count=self._step_count,
-            max_steps=self._task.max_steps if self._task else 0, # type: ignore
+            max_steps=self._task.max_steps if self._task else 0,
             done=self._done,
         )

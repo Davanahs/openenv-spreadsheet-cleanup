@@ -1,30 +1,33 @@
 # Ignore Python cache files
 __pycache__/
 *.py[cod]
+*__pycache__/*
 
 # Ignore environment files
 .env
+.env.*
+!.env.example
 
 # Ignore virtual environments
 venv/
+.venv/
+env/
+
+# Ignore Node.js / Frontend files
+node_modules/
+frontend/node_modules/
+dist/
+build/
 
 # Ignore IDE-specific files
 .vscode/
 .idea/
-*.sublime-project
-*.sublime-workspace
 
 # Ignore OS-specific files
 .DS_Store
 Thumbs.db
 
-# Ignore logs
+# Ignore logs & temp files
 *.log
-*.txt
-
-# Ignore test results
-*.xml
 *.out
-
-# Ignore data files
-sample_data/*.csv
+*.xml

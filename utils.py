@@ -37,36 +37,15 @@ def count_inconsistent_cells(df: pd.DataFrame) -> int:
         grouped = valid_df.groupby(lowered)
         for name, group in grouped:
             if group.nunique() > 1:
-                # Add the number of items that are not the most frequent variant?
-                # Or just add the whole group? The environment says "normalized X values"
-                # Let's just track total inconsistent cells as the count of all such groups
+                # Add the whole group count
                 total += int(len(group))
     return total
 
 def build_issues_summary(df: pd.DataFrame) -> Dict[str, Any]:
-    missing_dict = df.isnull().sum().to_dict()
-    missing_values = {k: int(v) for k, v in missing_dict.items() if v > 0}
-    
-    inconsistent_columns = {}
-    cols = detect_inconsistent(df)
-    for col in cols:
-        valid_df = df[col].dropna().astype(str).str.strip()
-        lowered = valid_df.str.lower()
-        grouped = valid_df.groupby(lowered)
-        groups_dict = {}
-        for name, group in grouped:
-            unique_vals = list(group.unique())
-            if len(unique_vals) > 1:
-                # Use the lowercase as canonical, or the most frequent one
-                canonical = pd.Series(unique_vals).str.title().mode()[0] if name else unique_vals[0]
-                groups_dict[canonical] = unique_vals
-        if groups_dict:
-            inconsistent_columns[col] = groups_dict
-
     return {
-        "missing_values": missing_values,
-        "duplicate_rows": detect_duplicates(df),
-        "inconsistent_columns": inconsistent_columns
+        "missing": count_total_missing(df),
+        "duplicates": detect_duplicates(df),
+        "inconsistent": count_inconsistent_cells(df),
     }
 
 def compute_data_quality_score(df: pd.DataFrame, initial_missing: int, initial_duplicates: int, initial_inconsistent: int) -> float:
@@ -84,3 +63,51 @@ def compute_data_quality_score(df: pd.DataFrame, initial_missing: int, initial_d
 
 def deterministic_approval(action_type_str: str, approved_actions: set) -> bool:
     return action_type_str in approved_actions
+
+def get_detailed_issues(df: pd.DataFrame) -> List[Any]:
+    """Return a list of detailed Issue objects for the frontend."""
+    issues = []
+    if df is None: return issues
+
+    # 1. Missing values
+    for col in df.columns:
+        null_indices = df[df[col].isnull()].index.tolist()
+        if null_indices:
+            issues.append({
+                "column": col,
+                "type": "missing",
+                "rows": null_indices
+            })
+            
+    # 2. Duplicate rows
+    cols_for_dup = [c for c in df.columns if c.lower() != "id"]
+    if not cols_for_dup:
+        cols_for_dup = list(df.columns)
+    dup_mask = df.duplicated(subset=cols_for_dup, keep=False)
+    dup_indices = df[dup_mask].index.tolist()
+    if dup_indices:
+        issues.append({
+            "column": "Dataset",
+            "type": "duplicate_rows",
+            "rows": dup_indices
+        })
+        
+    # 3. Inconsistent values
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        if col.lower() in ["id", "name", "email"]:
+            continue
+        valid_df = df[col].dropna().astype(str).str.strip()
+        if valid_df.empty: continue
+        lowered = valid_df.str.lower()
+        counts = valid_df.groupby(lowered).nunique()
+        inconsistent_lowered = counts[counts > 1].index.tolist()
+        
+        if inconsistent_lowered:
+            rows = df[df[col].astype(str).str.lower().isin(inconsistent_lowered)].index.tolist()
+            issues.append({
+                "column": col,
+                "type": "inconsistent",
+                "rows": rows
+            })
+            
+    return issues
