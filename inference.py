@@ -399,6 +399,10 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     
     while not obs.get("done", False):
         action = agent.decide(obs)
+        # Create a compressed, space-less JSON string for logging
+        action_log = json.dumps(action, separators=(',', ':'))
+        
+        # Pretty print for local debugging
         action_str = json.dumps(action, default=str)
         print(f"\n[step {step+1}] Action: {action_str}")
 
@@ -416,7 +420,7 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
         # [STEP] log - REQUIRED FORMAT FOR JUDGES
         error_val = f'"{error}"' if error else "null"
         done_val = str(done).lower()
-        print(f"[STEP] step={step+1} action={action_str[:50]}... reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+        print(f"[STEP] step={step+1} action={action_log} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
         
         step_rewards.append(reward)
         last_error = error
@@ -439,8 +443,7 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     # [END] log - REQUIRED FORMAT FOR JUDGES
     success = score >= 0.5  # Threshold for success
     rewards_str = ",".join([f"{r:.2f}" for r in step_rewards])
-    error_val = f'"{last_error}"' if last_error else "null"
-    print(f"[END] success={str(success).lower()} steps={step} score={score:.2f} rewards={rewards_str}", flush=True)
+    print(f"[END] success={str(success).lower()} steps={step} rewards={rewards_str}", flush=True)
 
     return score
 
