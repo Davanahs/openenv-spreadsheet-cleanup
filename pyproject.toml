@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "openenv-spreadsheet-cleanup"
 version = "1.0.0"
 description = "A spreadsheet cleanup environment for OpenEnv"
+requires-python = ">=3.10"
 authors = [
     {name = "Davanaa"}
 ]
@@ -16,5 +17,9 @@ dependencies = [
     "openpyxl",
     "python-dotenv",
     "httpx",
-    "openai"
+    "openai",
+    "openenv-core>=0.2.0"
 ]
+
+[project.scripts]
+server = "server.app:main"
