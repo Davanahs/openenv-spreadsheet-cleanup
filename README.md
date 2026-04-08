@@ -1,3 +1,12 @@
+---
+title: OpenEnv Spreadsheet Cleanup
+emoji: 🧹
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # 🧹 OpenEnv: Spreadsheet Data Cleanup
 
 **OpenEnv** is a cutting-edge, agentic evaluation environment designed to test and benchmark AI agents on their ability to clean messy, real-world spreadsheet data. It provides a robust FastAPI backend combined with a premium React-based dashboard for real-time observability and interactive evaluation.
