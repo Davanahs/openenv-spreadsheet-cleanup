@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-spreadsheet-cleanup"
+version = "1.0.0"
+description = "A spreadsheet cleanup environment for OpenEnv"
+authors = [
+    {name = "Davanaa"}
+]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pandas",
+    "openpyxl",
+    "python-dotenv",
+    "httpx",
+    "openai"
+]
