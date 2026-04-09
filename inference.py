@@ -461,8 +461,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        print(f"[FATAL] Unhandled exception in main: {exc}", flush=True)
-        sys.exit(0)  # Exit 0 so the process doesn't appear as a system crash
+    main()
