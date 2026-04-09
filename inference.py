@@ -34,15 +34,8 @@ import httpx
 # Configuration
 # ---------------------------------------------------------------------------
 load_dotenv()
-BASE_URL      = os.getenv("BASE_URL", "http://localhost:8000")
-API_BASE_URL  = os.getenv("API_BASE_URL", "")   # empty → OpenAI default
-# Hackathon judge sets HF_TOKEN, but we support OPENAI_API_KEY for local usage
-OPENAI_API_KEY = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "")))
-MODEL_NAME    = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
+# Remove static env bindings that fail on dynamically injected variables
 TASKS = ["easy", "medium", "hard"]
-
-# LLM mode is active when an API key is present
-USE_LLM = bool(OPENAI_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -50,13 +43,15 @@ USE_LLM = bool(OPENAI_API_KEY)
 # ---------------------------------------------------------------------------
 
 def api_get(path: str) -> Dict[str, Any]:
-    r = httpx.get(f"{BASE_URL}{path}", timeout=30)
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    r = httpx.get(f"{base_url}{path}", timeout=30)
     r.raise_for_status()
     return r.json()
 
 
 def api_post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    r = httpx.post(f"{BASE_URL}{path}", json=body, timeout=30)
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    r = httpx.post(f"{base_url}{path}", json=body, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -258,10 +253,11 @@ class LLMAgent:
 
     def __init__(self) -> None:
         from openai import OpenAI
-        self.api_key = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "dummy")))
         
-        # Use exact provided API base URL for LiteLLM Hackathon proxy
-        api_base_url = API_BASE_URL
+        # Dynamically fetch variables at init time to catch judge injection
+        self.api_key = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "dummy")))
+        api_base_url = os.environ.get("API_BASE_URL", "")
+        
         if not api_base_url and self.api_key.startswith("gsk_"):
             api_base_url = "https://api.groq.com/openai/v1"
             
@@ -271,8 +267,7 @@ class LLMAgent:
         )
         self._history: List[Dict[str, str]] = []
         
-        # Strictly use provided MODEL_NAME (no dynamic fallback for proxy compliance)
-        env_model = os.getenv("MODEL_NAME", MODEL_NAME)
+        env_model = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
         self.available_models = [env_model]
         print(f"  [System] Using strict Hackathon proxy model: {self.available_models[0]}")
 
@@ -419,17 +414,22 @@ def main():
     print("  Spreadsheet Data Cleanup — Baseline Inference")
     print("=" * 60)
 
-    # Validate required environment variable per hackathon spec
-    HF_TOKEN = os.getenv("HF_TOKEN")
-    if HF_TOKEN is None:
-        print("WARNING: HF_TOKEN not set. Running in heuristic mode.", flush=True)
+    # Dynamically evaluate environment at runtime
+    api_key_val = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "")))
+    api_base_url_val = os.environ.get("API_BASE_URL", "")
+    model_name_val = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+    use_llm = bool(api_key_val)
+
+    if not api_key_val:
+        print("WARNING: API_KEY not set. Running in heuristic mode.", flush=True)
 
     # Check environment is up
     try:
         health = api_get("/")
         print(f"Environment: {health}")
     except Exception as exc:
-        print(f"ERROR: Cannot reach environment at {BASE_URL}: {exc}")
+        base_url_val = os.getenv("BASE_URL", "http://localhost:8000")
+        print(f"ERROR: Cannot reach environment at {base_url_val}: {exc}")
         print("Make sure the server is running: uvicorn app:app --port 8000")
         # Emit [END] for each task so the judge parser doesn't hang
         for task_id in TASKS:
@@ -445,10 +445,10 @@ def main():
 
     # Choose agent — always fall back to HeuristicAgent if LLM init fails
     agent = None
-    if USE_LLM:
+    if use_llm:
         print(f"\n🤖 LLM mode active")
-        print(f"   API_BASE_URL : {API_BASE_URL or '(OpenAI default)'}")
-        print(f"   MODEL_NAME   : {MODEL_NAME}")
+        print(f"   API_BASE_URL : {api_base_url_val or '(OpenAI default)'}")
+        print(f"   MODEL_NAME   : {model_name_val}")
         try:
             agent = LLMAgent()
         except Exception as exc:
@@ -457,7 +457,7 @@ def main():
             agent = HeuristicAgent()
     
     if agent is None:
-        print("\n⚙️  Heuristic mode (set HF_TOKEN + API_BASE_URL to enable LLM)")
+        print("\n⚙️  Heuristic mode (set API_KEY + API_BASE_URL to enable LLM)")
         agent = HeuristicAgent()
 
     scores = {}
