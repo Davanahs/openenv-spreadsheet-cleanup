@@ -426,7 +426,7 @@ def main():
         for task_id in TASKS:
             print(f"[START] task={task_id} env=openenv model=HeuristicAgent", flush=True)
             print(f"[END] success=false steps=0 rewards=0.00", flush=True)
-        sys.exit(0)  # Exit 0 so process doesn't fail immediately
+        sys.exit(1)
 
     # Get task metadata
     try:
