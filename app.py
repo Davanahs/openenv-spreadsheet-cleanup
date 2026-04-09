@@ -27,19 +27,18 @@ import asyncio
 load_dotenv()  # picks up .env so OPENAI_API_KEY / API_BASE_URL are available
 
 # ---------------------------------------------------------------------------
-# Agent mode detection (read once at startup)
-# ---------------------------------------------------------------------------
-_OPENAI_API_KEY = os.getenv("API_KEY", os.getenv("OPENAI_API_KEY", os.getenv("HF_TOKEN", "")))
-_API_BASE_URL   = os.getenv("API_BASE_URL", "")
-_MODEL_NAME     = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
-USE_LLM = bool(_OPENAI_API_KEY)
-
 def _make_agent():
     """Return an LLMAgent if credentials are configured, else HeuristicAgent."""
-    if USE_LLM:
+    api_key_val = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "")))
+    use_llm = bool(api_key_val)
+    
+    if use_llm:
         from inference import LLMAgent
-        print(f"[AgentMode] LLM detected — model={_MODEL_NAME} base={_API_BASE_URL}", flush=True)
+        api_base_url_val = os.environ.get("API_BASE_URL", "")
+        model_name_val = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+        print(f"[AgentMode] LLM detected — model={model_name_val} base={api_base_url_val}", flush=True)
         return LLMAgent()
+    
     from inference import HeuristicAgent
     print("[AgentMode] No LLM credentials — using HeuristicAgent", flush=True)
     return HeuristicAgent()
@@ -186,11 +185,15 @@ async def quick_fix():
     from utils import count_total_issues
     from models import Action
 
-    agent_type = "LLM" if USE_LLM else "Heuristic"
-    agent_label = f"LLM ({_MODEL_NAME})" if USE_LLM else "HeuristicAgent"
+    api_key_val = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "")))
+    use_llm = bool(api_key_val)
+    model_name = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+    
+    agent_type = "LLM" if use_llm else "Heuristic"
+    agent_label = f"LLM ({model_name})" if use_llm else "HeuristicAgent"
 
     # Broadcast which agent is about to run so the frontend / WS log shows it
-    agent_msg = f"[AGENT] mode={agent_type} model={_MODEL_NAME if USE_LLM else 'rule-based'}"
+    agent_msg = f"[AGENT] mode={agent_type} model={model_name if use_llm else 'rule-based'}"
     print(agent_msg, flush=True)
     await manager.broadcast(agent_msg)
 
@@ -327,9 +330,13 @@ def get_report():
 @app.post("/run_suite", response_model=SuiteSummary, tags=["reporting"])
 async def run_suite():
     """Run the best available agent on all tasks and return a summary."""
-    agent_type = "LLM" if USE_LLM else "Heuristic"
-    agent_label = f"LLM ({_MODEL_NAME})" if USE_LLM else "HeuristicAgent"
-    suite_msg = f"[AGENT] mode={agent_type} model={_MODEL_NAME if USE_LLM else 'rule-based'} (run_suite)"
+    api_key_val = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "")))
+    use_llm = bool(api_key_val)
+    model_name = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+
+    agent_type = "LLM" if use_llm else "Heuristic"
+    agent_label = f"LLM ({model_name})" if use_llm else "HeuristicAgent"
+    suite_msg = f"[AGENT] mode={agent_type} model={model_name if use_llm else 'rule-based'} (run_suite)"
     print(suite_msg, flush=True)
     await manager.broadcast(suite_msg)
 
