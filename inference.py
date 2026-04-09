@@ -254,24 +254,13 @@ class LLMAgent:
     def __init__(self) -> None:
         from openai import OpenAI
         
-        try:
-            # Strictly use EXACT string mapping requested by Validator AST proxy checks
-            self._client = OpenAI(
-                base_url=os.environ["API_BASE_URL"],
-                api_key=os.environ["API_KEY"]
-            )
-            self.api_key = os.environ["API_KEY"]
-        except KeyError:
-            # Fallback for local testing where the judge doesn't strictly inject those keys
-            self.api_key = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "dummy")))
-            api_base_url = os.environ.get("API_BASE_URL", "")
-            if not api_base_url and self.api_key.startswith("gsk_"):
-                api_base_url = "https://api.groq.com/openai/v1"
-                
-            self._client = OpenAI(
-                base_url=api_base_url if api_base_url else None,
-                api_key=self.api_key,
-            )
+        # Strictly use EXACT string mapping requested by Validator AST proxy checks
+        # NO FALLBACKS: If the evaluator fails to inject these, the container will loudly crash.
+        self.api_key = os.environ["API_KEY"]
+        self._client = OpenAI(
+            base_url=os.environ["API_BASE_URL"],
+            api_key=os.environ["API_KEY"]
+        )
         self._history: List[Dict[str, str]] = []
         
         env_model = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
@@ -353,60 +342,55 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     step = 0
     step_rewards = []
 
-    try:
-        # Reset
-        result = api_post("/reset", {"task_id": task_id})
+    # Reset
+    result = api_post("/reset", {"task_id": task_id})
+    obs = result.get("observation", {})
+    agent.reset(obs, task_meta)
+    print(f"[reset] {obs.get('message', '')}")
+    print(f"        Rows: {obs.get('total_rows')}, Cols: {obs.get('total_columns')}")
+    print(f"        Quality: {obs.get('data_quality_score')}")
+
+    while not obs.get("done", False):
+        action = agent.decide(obs)
+        # Create a compressed, space-less JSON string for logging
+        action_log = json.dumps(action, separators=(',', ':'))
+
+        # Pretty print for local debugging
+        action_str = json.dumps(action, default=str)
+        print(f"\n[step {step+1}] Action: {action_str}")
+
+        result = api_post("/step", action)
         obs = result.get("observation", {})
-        agent.reset(obs, task_meta)
-        print(f"[reset] {obs.get('message', '')}")
-        print(f"        Rows: {obs.get('total_rows')}, Cols: {obs.get('total_columns')}")
-        print(f"        Quality: {obs.get('data_quality_score')}")
+        reward = result.get("reward", 0)
+        done = result.get("done", False)
+        error = result.get("error", None)
 
-        while not obs.get("done", False):
-            action = agent.decide(obs)
-            # Create a compressed, space-less JSON string for logging
-            action_log = json.dumps(action, separators=(',', ':'))
+        print(f"         Reward: {reward}")
+        print(f"         Message: {obs.get('message', '')}")
+        print(f"         Quality: {obs.get('data_quality_score')}")
+        print(f"         Done: {done}")
 
-            # Pretty print for local debugging
-            action_str = json.dumps(action, default=str)
-            print(f"\n[step {step+1}] Action: {action_str}")
+        # [STEP] log - REQUIRED FORMAT FOR JUDGES
+        error_val = f'"{error}"' if error else "null"
+        done_val = str(done).lower()
+        print(f"[STEP] step={step+1} action={action_log} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
 
-            result = api_post("/step", action)
-            obs = result.get("observation", {})
-            reward = result.get("reward", 0)
-            done = result.get("done", False)
-            error = result.get("error", None)
+        step_rewards.append(reward)
+        step += 1
+        if done:
+            break
 
-            print(f"         Reward: {reward}")
-            print(f"         Message: {obs.get('message', '')}")
-            print(f"         Quality: {obs.get('data_quality_score')}")
-            print(f"         Done: {done}")
+    # Get final state & score
+    final_state = api_get("/state")
+    score = compute_score(final_state)
 
-            # [STEP] log - REQUIRED FORMAT FOR JUDGES
-            error_val = f'"{error}"' if error else "null"
-            done_val = str(done).lower()
-            print(f"[STEP] step={step+1} action={action_log} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
-
-            step_rewards.append(reward)
-            step += 1
-            if done:
-                break
-
-        # Get final state & score
-        final_state = api_get("/state")
-        score = compute_score(final_state)
-
-        print(f"\n--- FINAL RESULTS for '{task_id}' ---")
-        print(f"  Steps used   : {final_state.get('step_count')} / {final_state.get('max_steps')}")
-        print(f"  Issues fixed : {final_state.get('initial_issues', 0) - final_state.get('issues_remaining', 0)}"
-              f" / {final_state.get('initial_issues', 0)}")
-        print(f"  Quality score: {final_state.get('data_quality_score')}")
-        print(f"  Unapproved   : {final_state.get('unapproved_attempts')}")
-        print(f"  FINAL SCORE  : {score}")
-
-    except Exception as exc:
-        print(f"  [ERROR] Task '{task_id}' failed with exception: {exc}", flush=True)
-        score = 0.0
+    print(f"\n--- FINAL RESULTS for '{task_id}' ---")
+    print(f"  Steps used   : {final_state.get('step_count')} / {final_state.get('max_steps')}")
+    print(f"  Issues fixed : {final_state.get('initial_issues', 0) - final_state.get('issues_remaining', 0)}"
+          f" / {final_state.get('initial_issues', 0)}")
+    print(f"  Quality score: {final_state.get('data_quality_score')}")
+    print(f"  Unapproved   : {final_state.get('unapproved_attempts')}")
+    print(f"  FINAL SCORE  : {score}")
 
     # [END] log — ALWAYS emitted even on exception (required by judge spec)
     success = score >= 0.5
@@ -450,20 +434,13 @@ def main():
     except Exception:
         tasks_meta = {}
 
-    # Choose agent — always fall back to HeuristicAgent if LLM init fails
     agent = None
     if use_llm:
         print(f"\n🤖 LLM mode active")
-        print(f"   API_BASE_URL : {api_base_url_val or '(OpenAI default)'}")
+        print(f"   API_BASE_URL : {api_base_url_val}")
         print(f"   MODEL_NAME   : {model_name_val}")
-        try:
-            agent = LLMAgent()
-        except Exception as exc:
-            print(f"  [Warning] LLMAgent init failed: {exc}", flush=True)
-            print("  [System] Falling back to HeuristicAgent", flush=True)
-            agent = HeuristicAgent()
-    
-    if agent is None:
+        agent = LLMAgent()
+    else:
         print("\n⚙️  Heuristic mode (set API_KEY + API_BASE_URL to enable LLM)")
         agent = HeuristicAgent()
 
