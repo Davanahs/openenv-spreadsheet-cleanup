@@ -307,8 +307,6 @@ class LLMAgent:
                 resp = self._client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    temperature=0,
-                    max_tokens=300,
                 )
                 content = resp.choices[0].message.content.strip()
                 
@@ -328,13 +326,15 @@ class LLMAgent:
                     self.available_models.insert(0, model_name)
                     
                 return action
-            except AuthenticationError as e:
-                # If authentication fails, no fallback will work
-                raise RuntimeError(f"Authentication Failed: {str(e)}")
             except Exception as e:
+                import traceback
+                print("\n" + "="*50, flush=True)
+                print("!!! PROXY REJECTED API REQUEST !!!", flush=True)
+                print(f"Error Type: {type(e).__name__}", flush=True)
+                print(f"Error Message: {str(e)}", flush=True)
+                traceback.print_exc(file=sys.stdout)
+                print("="*50 + "\n", flush=True)
                 last_error = e
-                print(f"\n  [Warning] Model {model_name} failed: {type(e).__name__} - {str(e)}")
-                print("  [System] Attempting fallback to the next available model...")
                 continue # Try the next model
 
         if last_error:
