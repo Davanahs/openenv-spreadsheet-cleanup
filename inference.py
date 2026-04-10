@@ -298,8 +298,21 @@ class LLMAgent:
             else:
                 self.available_models = [env_model]
         except Exception as e:
-            print(f"  [Warning] Could not list models from proxy (falling back to ENV): {e}")
-            self.available_models = [env_model]
+            print(f"  [Warning] Could not list models from proxy (falling back to robust list): {e}")
+            env_var = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
+            fallback_list = [
+                env_var,
+                "gpt-3.5-turbo",
+                "gpt-4o",
+                "gpt-4o-mini",
+                "meta-llama/Meta-Llama-3-8B-Instruct",
+                "meta-llama/Meta-Llama-3-70B-Instruct",
+                "meta-llama/Llama-2-70b-chat-hf",
+                "llama3",
+                "mixtral-8x7b-32768",
+                "claude-3-haiku-20240307"
+            ]
+            self.available_models = list(dict.fromkeys(fallback_list))
             
         print(f"  [System] Activated Model: {self.available_models[0]}")
 
