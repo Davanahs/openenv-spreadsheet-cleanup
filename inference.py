@@ -337,10 +337,12 @@ class LLMAgent:
                 print("  [System] Attempting fallback to the next available model...")
                 continue # Try the next model
 
-        raise RuntimeError(
-            f"All {len(self.available_models)} available models failed. "
-            f"Last error encountered: {str(last_error)}"
-        )
+        if last_error:
+            # Raise the actual underlying exception so the exact HTTP format error or Auth error 
+            # shows up at the very bottom of the traceback without getting truncated by the UI
+            raise last_error
+        
+        raise RuntimeError("No models to try.")
 
 
 # ---------------------------------------------------------------------------
