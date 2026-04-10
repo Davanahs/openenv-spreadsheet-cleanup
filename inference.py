@@ -327,25 +327,20 @@ class LLMAgent:
                     
                 return action
             except Exception as e:
-                import traceback
-                print("\n" + "="*50, flush=True)
-                print("!!! PROXY REJECTED API REQUEST !!!", flush=True)
-                print(f"Error Type: {type(e).__name__}", flush=True)
-                print(f"Error Message: {str(e)}", flush=True)
-                traceback.print_exc(file=sys.stdout)
-                print("="*50 + "\n", flush=True)
+                import sys
+                # DO NOT use traceback.print_exc() - the Hackathon Validator regex matches 
+                # the word 'Traceback' and truncates it! Just print the raw error strings.
+                sys.stderr.write(f"\nCRITICAL_PROXY_ERROR => {type(e).__name__}: {str(e)}\n")
                 last_error = e
                 continue # Try the next model
 
         if last_error:
             import sys
-            # Write just the pure exception string without the monstrous traceback
-            # so the UI character limit doesn't cut it off!
-            sys.stderr.write(f"\nLITELLM_CRASH => {type(last_error).__name__}: {str(last_error)}\n")
+            sys.stderr.write(f"\nFINAL_CRASH => {type(last_error).__name__}: {str(last_error)}\n")
             sys.exit(1)
             
         import sys
-        sys.stderr.write("\nLITELLM_CRASH => No models to try.\n")
+        sys.stderr.write("\nFINAL_CRASH => No models to try.\n")
         sys.exit(1)
 
 
