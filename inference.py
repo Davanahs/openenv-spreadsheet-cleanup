@@ -338,11 +338,15 @@ class LLMAgent:
                 continue # Try the next model
 
         if last_error:
-            # Raise the actual underlying exception so the exact HTTP format error or Auth error 
-            # shows up at the very bottom of the traceback without getting truncated by the UI
-            raise last_error
-        
-        raise RuntimeError("No models to try.")
+            import sys
+            # Write just the pure exception string without the monstrous traceback
+            # so the UI character limit doesn't cut it off!
+            sys.stderr.write(f"\nLITELLM_CRASH => {type(last_error).__name__}: {str(last_error)}\n")
+            sys.exit(1)
+            
+        import sys
+        sys.stderr.write("\nLITELLM_CRASH => No models to try.\n")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
