@@ -440,6 +440,18 @@ def main():
     print("  Spreadsheet Data Cleanup — Baseline Inference")
     print("=" * 60)
 
+    # ===== DIAGNOSTICS: Print evaluator-injected environment variables =====
+    import sys
+    sys.stderr.write("\n=== EVALUATOR ENV DIAGNOSTICS ===\n")
+    for key in ["API_KEY", "API_BASE_URL", "MODEL_NAME", "OPENAI_API_KEY", "HF_TOKEN", "BASE_URL"]:
+        val = os.environ.get(key, "NOT_SET")
+        # Mask secrets but show first 8 chars so we know if value is set
+        if key in ("API_KEY", "OPENAI_API_KEY", "HF_TOKEN") and val != "NOT_SET":
+            val = val[:8] + "..." + f" (len={len(os.environ.get(key, ''))})"
+        sys.stderr.write(f"  {key}={val}\n")
+    sys.stderr.write("=================================\n\n")
+    # ========================================================================
+
     # Dynamically evaluate environment at runtime
     api_key_val = os.environ.get("API_KEY", os.environ.get("OPENAI_API_KEY", os.environ.get("HF_TOKEN", "")))
     api_base_url_val = os.environ.get("API_BASE_URL", "")
