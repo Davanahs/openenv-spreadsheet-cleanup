@@ -281,40 +281,11 @@ class LLMAgent:
         )
         self._history: List[Dict[str, str]] = []
         
+        # Use exactly the MODEL_NAME injected by the evaluator — do NOT call models.list()
+        # (LiteLLM returns wildcard '*' from /v1/models which is not a valid model name)
         env_model = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
-        
-        # Dynamically query the Hackathon Proxy to discover which models are actually proxy-authorized!
-        # If the container injected "gpt-4" but the proxy only permits "meta-llama/Llama-2", this auto-corrects it.
-        try:
-            available = self._client.models.list()
-            model_ids = [m.id for m in available.data]
-            if model_ids:
-                print(f"  [System] Discovered models on proxy: {model_ids}")
-                # Use environment model if the proxy supports it, otherwise steal the first one in their proxy list
-                if env_model in model_ids:
-                    self.available_models = [env_model]
-                else:
-                    self.available_models = [model_ids[0]]
-            else:
-                self.available_models = [env_model]
-        except Exception as e:
-            print(f"  [Warning] Could not list models from proxy (falling back to robust list): {e}")
-            env_var = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
-            fallback_list = [
-                env_var,
-                "gpt-3.5-turbo",
-                "gpt-4o",
-                "gpt-4o-mini",
-                "meta-llama/Meta-Llama-3-8B-Instruct",
-                "meta-llama/Meta-Llama-3-70B-Instruct",
-                "meta-llama/Llama-2-70b-chat-hf",
-                "llama3",
-                "mixtral-8x7b-32768",
-                "claude-3-haiku-20240307"
-            ]
-            self.available_models = list(dict.fromkeys(fallback_list))
-            
-        print(f"  [System] Activated Model: {self.available_models[0]}")
+        self.available_models = [env_model]
+        print(f"  [System] Using model from environment: {env_model}")
 
     def reset(self, obs: Dict[str, Any], task_meta=None):
         pass # History is built fresh each step to avoid context window limits

@@ -17,9 +17,8 @@ COPY . .
 # Expose port (default for HF Spaces)
 EXPOSE 7860
 
-# Set environment variables
-ENV API_BASE_URL=https://api.openai.com/v1
-ENV MODEL_NAME=gpt-4
+# NOTE: Do NOT hardcode API_BASE_URL, API_KEY, or MODEL_NAME here.
+# The Hackathon evaluator injects these at runtime. Hardcoding overrides injection.
 
 # Run FastAPI server
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
