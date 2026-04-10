@@ -42,18 +42,36 @@ TASKS = ["easy", "medium", "hard"]
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
+def _get_base_url() -> str:
+    """Return the base URL. If no env var, try local 8000 first, fallback to HF Spaces 7860."""
+    return os.getenv("BASE_URL")
+
 def api_get(path: str) -> Dict[str, Any]:
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
-    r = httpx.get(f"{base_url}{path}", timeout=30)
-    r.raise_for_status()
-    return r.json()
+    url = _get_base_url()
+    try:
+        r = httpx.get(f"{url or 'http://localhost:8000'}{path}", timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except httpx.ConnectError as e:
+        if url is None:  # Only fall back if the user didn't explicitly specify BASE_URL
+            r = httpx.get(f"http://localhost:7860{path}", timeout=30)
+            r.raise_for_status()
+            return r.json()
+        raise e
 
 
-def api_post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
-    r = httpx.post(f"{base_url}{path}", json=body, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def api_post(path: str, body: Dict[str, Any] = None) -> Dict[str, Any]:
+    url = _get_base_url()
+    try:
+        r = httpx.post(f"{url or 'http://localhost:8000'}{path}", json=body, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except httpx.ConnectError as e:
+        if url is None:
+            r = httpx.post(f"http://localhost:7860{path}", json=body, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        raise e
 
 
 # ---------------------------------------------------------------------------
