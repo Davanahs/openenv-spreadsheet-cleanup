@@ -282,8 +282,26 @@ class LLMAgent:
         self._history: List[Dict[str, str]] = []
         
         env_model = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
-        self.available_models = [env_model]
-        print(f"  [System] Using strict Hackathon proxy model: {self.available_models[0]}")
+        
+        # Dynamically query the Hackathon Proxy to discover which models are actually proxy-authorized!
+        # If the container injected "gpt-4" but the proxy only permits "meta-llama/Llama-2", this auto-corrects it.
+        try:
+            available = self._client.models.list()
+            model_ids = [m.id for m in available.data]
+            if model_ids:
+                print(f"  [System] Discovered models on proxy: {model_ids}")
+                # Use environment model if the proxy supports it, otherwise steal the first one in their proxy list
+                if env_model in model_ids:
+                    self.available_models = [env_model]
+                else:
+                    self.available_models = [model_ids[0]]
+            else:
+                self.available_models = [env_model]
+        except Exception as e:
+            print(f"  [Warning] Could not list models from proxy (falling back to ENV): {e}")
+            self.available_models = [env_model]
+            
+        print(f"  [System] Activated Model: {self.available_models[0]}")
 
     def reset(self, obs: Dict[str, Any], task_meta=None):
         pass # History is built fresh each step to avoid context window limits
