@@ -432,7 +432,9 @@ def run_task(task_id: str, agent, task_meta: Optional[Dict] = None):
     # [END] log — ALWAYS emitted even on exception (required by judge spec)
     success = score >= 0.5
     rewards_str = ",".join([f"{r:.2f}" for r in step_rewards]) if step_rewards else "0.00"
-    print(f"[END] success={str(success).lower()} steps={step} rewards={rewards_str}", flush=True)
+    # score must be STRICTLY between 0 and 1 (not 0.0, not 1.0) per validator spec
+    clamped_score = max(0.0001, min(0.9999, score))
+    print(f"[END] success={str(success).lower()} steps={step} score={clamped_score:.4f} rewards={rewards_str}", flush=True)
 
     return score
 
