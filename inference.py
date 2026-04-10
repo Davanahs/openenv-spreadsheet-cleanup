@@ -281,11 +281,25 @@ class LLMAgent:
         )
         self._history: List[Dict[str, str]] = []
         
-        # Use exactly the MODEL_NAME injected by the evaluator — do NOT call models.list()
-        # (LiteLLM returns wildcard '*' from /v1/models which is not a valid model name)
-        env_model = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
-        self.available_models = [env_model]
-        print(f"  [System] Using model from environment: {env_model}")
+        # The evaluator does NOT inject MODEL_NAME - their LiteLLM proxy rejects OpenAI model names.
+        # Since this is a Meta PyTorch Hackathon, the proxy is running Llama models.
+        # Iterate through known Llama aliases until the proxy accepts one.
+        env_model = os.environ.get("MODEL_NAME")  # Use theirs if they inject it
+        self.available_models = list(filter(None, [
+            env_model,  # Evaluator-injected model takes top priority (if set)
+            "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "meta-llama/Meta-Llama-3-8B-Instruct",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "meta-llama/Llama-3.1-70B-Instruct",
+            "meta-llama/Meta-Llama-3-70B-Instruct",
+            "meta-llama/Llama-3-70b-instruct",
+            "meta-llama/Llama-2-70b-chat-hf",
+            "llama3",
+            "llama3.1",
+            "llama-3.1-8b-instant",
+            "gpt-3.5-turbo",   # Last resort
+        ]))
+        print(f"  [System] Model priority list (first {len(self.available_models)} entries): {self.available_models[:3]}...")
 
     def reset(self, obs: Dict[str, Any], task_meta=None):
         pass # History is built fresh each step to avoid context window limits
