@@ -90,7 +90,9 @@ def compute_score(state: Dict[str, Any]) -> float:
     efficiency = max(0, min(1, 1 - steps / max_steps))
     compliance = max(0, 1 - 0.25 * unapproved)
 
-    return round(0.50 * issues_fixed + 0.30 * quality + 0.10 * efficiency + 0.10 * compliance, 4)
+    score = 0.50 * issues_fixed + 0.30 * quality + 0.10 * efficiency + 0.10 * compliance
+    # Clamp strictly within (0, 1) exclusive
+    return round(max(0.0001, min(0.9999, score)), 4)
 
 
 # ---------------------------------------------------------------------------

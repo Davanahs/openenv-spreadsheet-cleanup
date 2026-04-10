@@ -71,7 +71,9 @@ def grade(env_state: EnvState, env: SpreadsheetCleanupEnv) -> float:
         + 0.10 * compliance_score
     )
     final_score = final_score - over_action_penalty + precision_bonus
-    return float(round(max(0.0, min(1.0, float(final_score))), 4))
+    # Clamp strictly within (0, 1) exclusive — the OpenEnv validator rejects scores of exactly 0.0 or 1.0
+    final_score = max(0.0001, min(0.9999, float(final_score)))
+    return float(round(final_score, 4))
 
 
 def grade_from_dict(state_dict: Dict) -> float:
